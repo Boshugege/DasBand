@@ -44,11 +44,21 @@ def interpolate_centerline(clean_points_df: pd.DataFrame, frame_times: np.ndarra
         valid_idx = np.where(valid_mask)[0]
         c_valid = centerline[valid_idx]
         
-        # 自适应窗口大小：假设真实人的转身动作不可能是瞬态的，而是秒级的
-        # polyorder=3 可以完美拟合局部的抛物线（转身时的加减速特征）而不将其抹平
-        window_length = min(31, (len(c_valid) // 2 * 2) - 1)  # 必须是奇数
-        if window_length > 3:
-            c_smooth = savgol_filter(c_valid, window_length=window_length, polyorder=3)
+        # --- 增大了平滑尺度的核心修改 ---
+        # 为什么之前没有明显变化？
+        # 如果 DAS 的特征帧率(Frame Rate)较高（例如10-50Hz），之前的 window_length=31 可能仅代表 0.5~3 秒。
+        # 走路带来的候选点横跳误差（比如左右脚交替、或标签抖动）可能就要持续 1-2 秒，小窗口会直接“顺应”这些噪声。
+        # 
+        # 现在我们把窗口扩大到一个相当大的范围（最大允许 201 帧，或者总长度的三分之一），
+        # 并且降低多项式阶数（polyorder=2，即只允许拟合抛物线/匀加速运动），杜绝更高次的三次、四次曲线扭曲。
+        # 这样滤波器会被迫拉展直线，并在转身处画一个完美的二次抛物线。
+        window_length = min(201, (len(c_valid) // 3 * 2) - 1)
+        if window_length % 2 == 0:
+            window_length += 1
+            
+        # 确保窗口长度大于多项式阶数，且有足够的平滑空间
+        if window_length > 7:
+            c_smooth = savgol_filter(c_valid, window_length=window_length, polyorder=2)
             centerline[valid_idx] = c_smooth.astype(np.float32)
         
     return centerline
