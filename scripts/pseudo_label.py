@@ -34,18 +34,22 @@ def interpolate_centerline(clean_points_df: pd.DataFrame, frame_times: np.ndarra
         if np.any(valid):
             centerline[valid] = np.interp(frame_times[valid], t, c).astype(np.float32)
             
-    # 全局高斯平滑：这是一种极难被破坏(Robust)，并且能彻底消除由于插值或候选点跳跃导致“回头”、“锯齿”的方法
+    # 替换全局高斯平滑为 Savitzky-Golay 滤波器（保边、保极值平滑）
+    # 这样既能消除由于插值引发的高频“锯齿”，又能完美保留目标真实的低频“转身（极值）”轨迹
     valid_mask = np.isfinite(centerline)
-    if np.sum(valid_mask) > 10:
-        from scipy.ndimage import gaussian_filter1d
+    if np.sum(valid_mask) > 15:
+        from scipy.signal import savgol_filter
         
         # 提取有效的一段连续波段进行平滑
         valid_idx = np.where(valid_mask)[0]
         c_valid = centerline[valid_idx]
         
-        # sigma=15.0 等效于是很大范围的平滑，对应物理对象强烈的惯性（拒绝高频横跳）
-        c_smooth = gaussian_filter1d(c_valid, sigma=15.0)
-        centerline[valid_idx] = c_smooth.astype(np.float32)
+        # 自适应窗口大小：假设真实人的转身动作不可能是瞬态的，而是秒级的
+        # polyorder=3 可以完美拟合局部的抛物线（转身时的加减速特征）而不将其抹平
+        window_length = min(31, (len(c_valid) // 2 * 2) - 1)  # 必须是奇数
+        if window_length > 3:
+            c_smooth = savgol_filter(c_valid, window_length=window_length, polyorder=3)
+            centerline[valid_idx] = c_smooth.astype(np.float32)
         
     return centerline
 
