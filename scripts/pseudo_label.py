@@ -33,6 +33,20 @@ def interpolate_centerline(clean_points_df: pd.DataFrame, frame_times: np.ndarra
         valid = (frame_times >= t[0]) & (frame_times <= t[-1])
         if np.any(valid):
             centerline[valid] = np.interp(frame_times[valid], t, c).astype(np.float32)
+            
+    # 全局高斯平滑：这是一种极难被破坏(Robust)，并且能彻底消除由于插值或候选点跳跃导致“回头”、“锯齿”的方法
+    valid_mask = np.isfinite(centerline)
+    if np.sum(valid_mask) > 10:
+        from scipy.ndimage import gaussian_filter1d
+        
+        # 提取有效的一段连续波段进行平滑
+        valid_idx = np.where(valid_mask)[0]
+        c_valid = centerline[valid_idx]
+        
+        # sigma=15.0 等效于是很大范围的平滑，对应物理对象强烈的惯性（拒绝高频横跳）
+        c_smooth = gaussian_filter1d(c_valid, sigma=15.0)
+        centerline[valid_idx] = c_smooth.astype(np.float32)
+        
     return centerline
 
 

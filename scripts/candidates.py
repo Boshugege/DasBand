@@ -50,8 +50,21 @@ def detect_audio_step_times(audio_path: str, config: DASBandConfig):
 
 def estimate_peak_channel(primary_energy: np.ndarray, frame_times: np.ndarray, event_time: float):
     idx = int(np.argmin(np.abs(frame_times - event_time)))
-    channel_energy = primary_energy[idx]
-    best_ch = int(np.argmax(channel_energy))
+    
+    # 局部时间窗口平滑，减少瞬态噪声 (使用前后共5帧)
+    start_idx = max(0, idx - 2)
+    end_idx = min(len(frame_times), idx + 3)
+    channel_energy = np.mean(primary_energy[start_idx:end_idx], axis=0)
+    
+    # 获取最高能量的50%作为阈值，计算局部能量质心 (Sub-pixel精度的中心点，远比argmax稳定)
+    threshold = float(np.max(channel_energy)) * 0.5
+    mask = channel_energy > threshold
+    if np.sum(mask) > 0:
+        channels = np.arange(len(channel_energy), dtype=np.float64)
+        best_ch = np.sum(channels[mask] * channel_energy[mask]) / np.sum(channel_energy[mask])
+    else:
+        best_ch = float(np.argmax(channel_energy))
+        
     max_e = float(np.max(channel_energy))
     mean_e = float(np.mean(channel_energy))
     std_e = float(np.std(channel_energy) + 1e-12)
