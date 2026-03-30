@@ -5,10 +5,10 @@ import argparse
 from pathlib import Path
 from typing import Optional
 
-from .scripts.config import DASBandConfig
-from .scripts.extract_tdms import extract_name_to_csv
-from .scripts.io import ensure_dir, resolve_audio_path, save_json
-from .scripts.pipeline import prepare_training_labels, run_inference, train_from_prep
+from scripts.config import DASBandConfig
+from scripts.extract_tdms import extract_name_to_csv
+from scripts.io import ensure_dir, resolve_audio_path, save_json
+from scripts.pipeline import prepare_training_labels, run_inference, train_from_prep
 
 
 def build_parser():
@@ -17,7 +17,7 @@ def build_parser():
     )
     parser.add_argument("name", help="Sample name. Expected Airtag CSV: <data_root>/Airtag/<name>.csv")
 
-    parser.add_argument("--data_root", default="Data", help="Data root directory.")
+    parser.add_argument("--data_root", default="D:\\WeaklySupervisedFootstep\\Data", help="Data root directory.")
     parser.add_argument("--audio_dir", default=None, help="Audio directory override. Default: <data_root>/Audio")
     parser.add_argument("--airtag_dir", default=None, help="Airtag directory override. Default: <data_root>/Airtag")
     parser.add_argument("--das_dir", default=None, help="TDMS directory override. Default: <data_root>/DAS")
@@ -155,7 +155,7 @@ def main():
 
     data_root, audio_dir, airtag_dir, das_dir, output_root, sample_root = _resolve_paths(args)
     signals_dir = ensure_dir(sample_root / "signals")
-    workflow_dir = ensure_dir(sample_root / "dasband" / "workflow")
+    workflow_dir = ensure_dir(sample_root / "workflow")
 
     das_csv_path = signals_dir / f"{args.name}.csv"
     if args.skip_extract:

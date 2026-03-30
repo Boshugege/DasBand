@@ -105,4 +105,4 @@ class DASBandConfig:
     def resolve_run_root(self, stage: str) -> Path:
         base = self.resolve_output_root()
         tag = self.name or "unnamed"
-        return base / tag / "dasband" / stage
+        return base / tag / stage
