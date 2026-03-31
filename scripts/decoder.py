@@ -262,7 +262,18 @@ def extract_mot_tracks(mask: np.ndarray, frame_times: np.ndarray, config: DASBan
     threshold = getattr(config, 'mot_peak_threshold', 0.2)
     init_hits = getattr(config, 'mot_init_hits', 3)
     max_age = getattr(config, 'mot_max_age', 15)
-    match_thresh = getattr(config, 'mot_match_threshold', 15.0)
+    
+    # 【修复1：物理限制卡口 (考虑到触发脚印的声学空间离散性)】
+    # 一帧时间虽短，人绝对走不了这么远。但这不仅是“人”的位移，更是“声源”的位移。
+    # 重踩下去，应力波可能在前方甚至后方几米处诱发另一个子频带的高光，形成“虚拟脚印偏移”。
+    # 所以模型看到的波峰，并不完全等于人身体质心的物理位移，而是“这个区域内的脚步激发现象”。
+    # 结合你“触发识别可能在附近五个通道”的先验：
+    match_thresh = 5.0 # max dx allowed per frame, 容忍由于步伐引起的相邻通道信号横跳
+    
+    # 增加最小峰距离，同一个人的一步不可能在相距仅仅 1-3 米（通道）同时产生两个并列的独立人
+    # 如果允许单步脚印在附件 5 个通道内散布，那么必须用 5.0 把这些散布的“碎步峰”统一 NMS 掉，
+    # 否则同一次踩踏引发的两个波峰会被建出两个 Track。
+    min_peak_dist = 5.0
     
     tracks = []
     active_tracks = []
@@ -272,11 +283,30 @@ def extract_mot_tracks(mask: np.ndarray, frame_times: np.ndarray, config: DASBan
         t_val = frame_times[t_idx]
         dt = float(t_val - frame_times[t_idx-1]) if t_idx > 0 else 0.025
         
-        # 1. 独立并发波峰提取 (Detection)
-        # 用 find_peaks 找出当前帧并存的所有独立主峰能量（允许存在并行）
+        # 1. 独立并发波峰提取 (Detection)带上了强非极大值抑制 (NMS)
         m_t = mask[t_idx]
-        peaks, _ = find_peaks(m_t, height=threshold, distance=max(1, int(getattr(config, 'mot_min_distance', 5.0))))
-        detections = peaks.astype(np.float64)
+        peaks, props = find_peaks(m_t, height=threshold, distance=max(1, int(min_peak_dist)))
+        
+        # 【修复2：亚像素提取与重力中心化合成 (People Synthesis)】
+        # 纯粹的波峰只是一个整数通道。很多时候一个人踩下去，周围几个通道都有响应。
+        # 这里使用与你设定“5通道物理激发范围”相匹配的合成半径。
+        # win_radius = 2 代表提取峰值及左右各2个通道，总计正好是 5 个通道 (即5米)。
+        # 这保证了这5米内所有的概率亮斑被绝对公平地加权平均缩为一个极具代表性的实数坐标。
+        detections = []
+        for p in peaks:
+            # 在峰值附近提取小窗口求质心
+            win_radius = 2  # 局部合成半径 [-2, -1, 0, 1, 2] 共 5 个通道
+            start_idx = max(0, p - win_radius)
+            end_idx = min(C, p + win_radius + 1)
+            local_mask = m_t[start_idx:end_idx]
+            local_channels = np.arange(start_idx, end_idx, dtype=np.float64)
+            if np.sum(local_mask) > 1e-8:
+                centroid = np.sum(local_mask * local_channels) / np.sum(local_mask)
+                detections.append(centroid)
+            else:
+                detections.append(float(p))
+                
+        detections = np.array(detections, dtype=np.float64)
         
         # 2. 预测存活状态轨 (Prediction)
         for trk in active_tracks:
