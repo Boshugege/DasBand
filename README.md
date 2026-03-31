@@ -253,7 +253,7 @@ python -m dasband.main wangdihai
 
 输出：
 
-- `output/<name>/dasband/train/dasband_model.pt`
+- `output/<name>/train/dasband_model.pt`
 - `train_history.csv`
 - `train_summary.json`
 
@@ -387,7 +387,7 @@ python -m dasband.main wangdihai --stop_after_prepare
 
 ```bash
 python -m dasband.main wangjiahui \
-  --checkpoint output/wangdihai/dasband/train/dasband_model.pt
+  --checkpoint output/wangdihai/train/dasband_model.pt
 ```
 
 ### 5. 单独调用 prepare
@@ -403,7 +403,7 @@ python -m dasband.scripts.prepare_labels \
 
 ```bash
 python -m dasband.scripts.train \
-  --prep_dir output/wangdihai/dasband/prepare \
+  --prep_dir output/wangdihai/prepare \
   --name wangdihai
 ```
 
@@ -412,7 +412,7 @@ python -m dasband.scripts.train \
 ```bash
 python -m dasband.scripts.infer \
   --das_csv output/wangjiahui/signals/wangjiahui.csv \
-  --checkpoint output/wangdihai/dasband/train/dasband_model.pt \
+  --checkpoint output/wangdihai/train/dasband_model.pt \
   --name wangjiahui
 ```
 
