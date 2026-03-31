@@ -87,6 +87,13 @@ class DASBandConfig:
     sigma_min: float = 0.5
     sigma_max: float = 3.0
 
+    mot_peak_threshold: float = 0.2
+    mot_min_distance: float = 5.0
+    mot_init_hits: int = 3
+    mot_max_age: int = 15
+    mot_match_threshold: float = 15.0
+    mot_damping: float = 0.9
+
     seed: int = 42
 
     def to_dict(self) -> Dict[str, Any]:

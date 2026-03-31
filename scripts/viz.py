@@ -62,8 +62,10 @@ def plot_pseudo_label(primary_energy, frame_times, pseudo_label, centerline, out
     _savefig(Path(output_path))
 
 
-def plot_inference_result(primary_energy, frame_times, mask, path, sigma, output_path: str, centroid=None, dp_path=None):
+def plot_inference_result(primary_energy, frame_times, mask, df_tracks, output_path: str):
     fig, axes = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
+    
+    # 绘制基础热力图
     axes[0].imshow(
         np.log1p(primary_energy.T),
         aspect="auto",
@@ -71,14 +73,9 @@ def plot_inference_result(primary_energy, frame_times, mask, path, sigma, output
         extent=[frame_times[0], frame_times[-1], 0, primary_energy.shape[1] - 1],
         cmap="viridis",
     )
-    axes[0].plot(frame_times, path, color="white", linewidth=1.5)
-    if centroid is not None:
-        axes[0].plot(frame_times, centroid, color="gold", linewidth=1.0, alpha=0.8, linestyle="--")
-    if dp_path is not None:
-        axes[0].plot(frame_times, dp_path, color="cyan", linewidth=0.8, alpha=0.6)
-    axes[0].fill_between(frame_times, path - sigma, path + sigma, color="white", alpha=0.2)
     axes[0].set_ylabel("Channel")
-    axes[0].set_title("Primary Energy + Decoded Track")
+    axes[0].set_title("Primary Energy + Decoded Tracks (MOT)")
+    
     axes[1].imshow(
         mask.T,
         aspect="auto",
@@ -88,13 +85,32 @@ def plot_inference_result(primary_energy, frame_times, mask, path, sigma, output
         vmin=0.0,
         vmax=1.0,
     )
-    axes[1].plot(frame_times, path, color="cyan", linewidth=1.2)
-    if centroid is not None:
-        axes[1].plot(frame_times, centroid, color="white", linewidth=0.9, alpha=0.7, linestyle="--")
-    if dp_path is not None:
-        axes[1].plot(frame_times, dp_path, color="lime", linewidth=0.8, alpha=0.5)
-    axes[1].fill_between(frame_times, path - sigma, path + sigma, color="cyan", alpha=0.2)
     axes[1].set_xlabel("Time (s)")
     axes[1].set_ylabel("Channel")
-    axes[1].set_title("Predicted Mask")
+    axes[1].set_title("Predicted Mask + Multi-Object Tracking")
+
+    # 动态匹配颜色与状态机绘制
+    if not df_tracks.empty:
+        track_ids = df_tracks['track_id'].unique()
+        # 创建彩色渐变组
+        colors = plt.cm.get_cmap('hsv', len(track_ids) + 1)
+        
+        for idx, tid in enumerate(track_ids):
+            trk = df_tracks[df_tracks['track_id'] == tid].sort_values("time")
+            c = colors(idx)
+            
+            # --- 绘制 CONFIRMED (追踪确认) 的实线 ---
+            conf = trk[trk['state'] == 'CONFIRMED']
+            if not conf.empty:
+                axes[0].plot(conf['time'], conf['channel'], color=c, linewidth=2, label=f"Track ID: {tid}")
+                axes[1].plot(conf['time'], conf['channel'], color=c, linewidth=2)
+                
+            # --- 绘制 LOST (脱脱/暂离) 的虚线点 ---
+            lost = trk[trk['state'] == 'LOST']
+            if not lost.empty:
+                axes[0].scatter(lost['time'], lost['channel'], color=c, s=12, marker='x', alpha=0.6)
+                axes[1].scatter(lost['time'], lost['channel'], color=c, s=12, marker='x', alpha=0.6)
+
+        axes[0].legend(loc="upper right", fontsize=9, bbox_to_anchor=(1.15, 1.0))
+
     _savefig(Path(output_path))

@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
+from scipy.optimize import linear_sum_assignment
+from scipy.signal import find_peaks
 
 from .config import DASBandConfig
 
@@ -182,3 +185,184 @@ def estimate_uncertainty(mask: np.ndarray, path: np.ndarray, config: DASBandConf
         sigma = sigma * float(config.sigma_scale)
         sigma = np.clip(sigma, float(config.sigma_min), float(config.sigma_max))
     return sigma.astype(np.float32)
+
+
+class TrackState:
+    INIT = "INIT"
+    CONFIRMED = "CONFIRMED"
+    LOST = "LOST"
+    DEAD = "DEAD"
+
+
+class Track:
+    def __init__(self, track_id: int, start_time: float, start_frame: int, start_pos: float, config: DASBandConfig):
+        self.track_id = track_id
+        self.state = TrackState.INIT
+        
+        self.hits = 1
+        self.time_since_update = 0
+        
+        # 卡尔曼状态：[位置(channel), 速度(channel/s)]
+        self.x = np.array([start_pos, 0.0], dtype=np.float64)
+        self.P = np.diag([float(config.kalman_init_pos_var), float(config.kalman_init_vel_var)])
+        self.q = float(config.kalman_process_var)
+        self.r = float(config.kalman_measurement_var)
+        self.r_floor = float(config.kalman_measurement_var_floor)
+        self.damping = getattr(config, 'mot_damping', 0.9)
+        
+        # 记录生命周期历史
+        self.history = [{
+            "frame": start_frame,
+            "time": start_time,
+            "channel": start_pos,
+            "state": self.state
+        }]
+        
+    def predict(self, dt: float):
+        F = np.array([[1.0, dt], [0.0, 1.0]], dtype=np.float64)
+        Q = self.q * np.array([
+            [0.25 * dt**4, 0.5 * dt**3],
+            [0.5 * dt**3, dt**2]
+        ], dtype=np.float64)
+        
+        self.x = F @ self.x
+        self.P = F @ self.P @ F.T + Q
+        
+    def apply_damping(self):
+        # 物理学阻尼：失去观测时速度按比例缓释，预测的不确定性膨胀 (暂离态物理惯性)
+        self.x[1] *= self.damping
+        self.P[0, 0] += self.q * 2.0
+        
+    def update(self, measurement: float):
+        H = np.array([[1.0, 0.0]], dtype=np.float64)
+        R = np.array([[self.r + self.r_floor]], dtype=np.float64)
+        
+        y = measurement - (H @ self.x)[0]
+        S = H @ self.P @ H.T + R
+        K = self.P @ H.T @ np.linalg.inv(S)
+        
+        self.x = self.x + (K @ np.array([y])).reshape(-1)
+        self.P = (np.eye(2) - K @ H) @ self.P
+
+    def record(self, frame_idx: int, t_val: float):
+        self.history.append({
+            "frame": frame_idx,
+            "time": t_val,
+            "channel": float(self.x[0]),
+            "state": self.state
+        })
+
+
+def extract_mot_tracks(mask: np.ndarray, frame_times: np.ndarray, config: DASBandConfig):
+    """
+    MOT (Multi-Object Tracking) 入口函数
+    基于找峰(Peak Detection) + 匈牙利算法数据关联 + 四元状态卡尔曼生存周期的对象追踪器
+    """
+    T, C = mask.shape
+    threshold = getattr(config, 'mot_peak_threshold', 0.2)
+    init_hits = getattr(config, 'mot_init_hits', 3)
+    max_age = getattr(config, 'mot_max_age', 15)
+    match_thresh = getattr(config, 'mot_match_threshold', 15.0)
+    
+    tracks = []
+    active_tracks = []
+    next_track_id = 1
+    
+    for t_idx in range(T):
+        t_val = frame_times[t_idx]
+        dt = float(t_val - frame_times[t_idx-1]) if t_idx > 0 else 0.025
+        
+        # 1. 独立并发波峰提取 (Detection)
+        # 用 find_peaks 找出当前帧并存的所有独立主峰能量（允许存在并行）
+        m_t = mask[t_idx]
+        peaks, _ = find_peaks(m_t, height=threshold, distance=max(1, int(getattr(config, 'mot_min_distance', 5.0))))
+        detections = peaks.astype(np.float64)
+        
+        # 2. 预测存活状态轨 (Prediction)
+        for trk in active_tracks:
+            trk.predict(dt)
+            
+        matched_tracks = []
+        matched_detections = []
+        
+        # 3. 匈牙利最优匹配 (Data Association)
+        if len(active_tracks) > 0 and len(detections) > 0:
+            cost_matrix = np.zeros((len(active_tracks), len(detections)))
+            for i, trk in enumerate(active_tracks):
+                for j, det in enumerate(detections):
+                    cost_matrix[i, j] = np.abs(trk.x[0] - det)
+                    
+            row_ind, col_ind = linear_sum_assignment(cost_matrix)
+            
+            for r, c in zip(row_ind, col_ind):
+                if cost_matrix[r, c] <= match_thresh:
+                    matched_tracks.append(r)
+                    matched_detections.append(c)
+                    
+        # 4. 更新成功匹配的 Track
+        for match_i, trk_idx in enumerate(matched_tracks):
+            trk = active_tracks[trk_idx]
+            det_idx = matched_detections[match_i]
+            trk.update(detections[det_idx])
+            trk.hits += 1
+            trk.time_since_update = 0
+            
+            if trk.state == TrackState.INIT and trk.hits >= init_hits:
+                trk.state = TrackState.CONFIRMED
+            elif trk.state == TrackState.LOST:
+                trk.state = TrackState.CONFIRMED
+                
+        # 5. 处理丢失的 Track (LOST / DEAD / Coasting)
+        unmatched_tracks = [i for i in range(len(active_tracks)) if i not in matched_tracks]
+        for idx in unmatched_tracks:
+            trk = active_tracks[idx]
+            trk.time_since_update += 1
+            trk.apply_damping()
+            
+            if trk.state == TrackState.INIT:
+                if trk.time_since_update > 1: # INIT态未能连续验证，直接枪毙
+                    trk.state = TrackState.DEAD
+            elif trk.state == TrackState.CONFIRMED:
+                trk.state = TrackState.LOST # 丢失目标，转入寻找重连期
+            
+            if trk.state == TrackState.LOST and trk.time_since_update > max_age:
+                trk.state = TrackState.DEAD # 长时间未重连，彻底宣告消失
+                
+        # 6. 为未匹配的游离点建立新 Track
+        unmatched_detections = [j for j in range(len(detections)) if j not in matched_detections]
+        for j in unmatched_detections:
+            new_trk = Track(next_track_id, float(t_val), t_idx, detections[j], config)
+            tracks.append(new_trk)
+            active_tracks.append(new_trk)
+            next_track_id += 1
+            
+        # 7. 清理 DEAD 目标
+        active_tracks = [t for t in active_tracks if t.state != TrackState.DEAD]
+            
+        # 8. 记录这一帧活跃轨迹的快照
+        for trk in active_tracks:
+            # 记录历史轨迹，第一帧初始化时已写记录，防止重复
+            if t_idx > trk.history[0]["frame"]:
+                trk.record(t_idx, float(t_val))
+                
+    # ================= 组织输出为长列 DataFrame =================
+    all_records = []
+    for trk in tracks:
+        # 只保留至少被"确认"过的主轴轨迹
+        is_valid = any(r["state"] == TrackState.CONFIRMED for r in trk.history)
+        if is_valid:
+            for r in trk.history:
+                all_records.append({
+                    "track_id": trk.track_id,
+                    "frame": r["frame"],
+                    "time": r["time"],
+                    "channel": r["channel"],
+                    "state": r["state"]
+                })
+                
+    if len(all_records) > 0:
+        df_tracks = pd.DataFrame(all_records)
+    else:
+        df_tracks = pd.DataFrame(columns=["track_id", "frame", "time", "channel", "state"])
+        
+    return df_tracks

@@ -269,32 +269,13 @@ def run_inference(das_csv: str, checkpoint_path: str, config: DASBandConfig, out
     feature_cube, feature_names, frame_times, primary_energy = build_feature_cube(das_trimmed, config)
     mask, checkpoint_config = infer_mask(feature_cube, checkpoint_path, config_override=config)
 
-    centroid = weighted_centroid(mask, threshold=config.centroid_threshold)
-    measurement_confidence = estimate_measurement_confidence(mask)
-    dp_path = extract_path_dp(mask, config)
-    kalman_path, kalman_velocity = kalman_smooth_track(centroid, frame_times, measurement_confidence, config)
-
-    if str(config.decode_mode).lower() == "dp":
-        path = dp_path
-    else:
-        path = kalman_path
-
-    path = np.clip(path, 0.0, float(mask.shape[1] - 1)).astype(np.float32)
-    sigma = estimate_uncertainty(mask, path, config=config)
+    # ================= MOT 多目标追踪器接管后端解码 =================
+    from .decoder import extract_mot_tracks
+    df_tracks = extract_mot_tracks(mask, frame_times, config)
 
     np.save(out_dir / "pred_mask.npy", mask)
-    pd.DataFrame(
-        {
-            "time": frame_times,
-            "centroid_channel": centroid,
-            "dp_path_channel": dp_path,
-            "kalman_path_channel": kalman_path,
-            "kalman_velocity": kalman_velocity,
-            "path_channel": path,
-            "measurement_confidence": measurement_confidence,
-            "sigma": sigma,
-        }
-    ).to_csv(out_dir / "track.csv", index=False)
+    df_tracks.to_csv(out_dir / "mot_tracks.csv", index=False)
+    
     save_json(
         out_dir / "infer_summary.json",
         {
@@ -303,27 +284,23 @@ def run_inference(das_csv: str, checkpoint_path: str, config: DASBandConfig, out
             "used_trim_end_s": used_end_s,
             "feature_names": feature_names,
             "checkpoint_config": checkpoint_config.to_dict(),
-            "decode_mode": config.decode_mode,
+            "decode_mode": "mot",
+            "tracks_found": int(df_tracks['track_id'].nunique()) if not df_tracks.empty else 0
         },
     )
+    
     plot_inference_result(
         primary_energy,
         frame_times,
         mask,
-        path,
-        sigma,
-        str(out_dir / "inference_result.png"),
-        centroid=centroid,
-        dp_path=dp_path,
+        df_tracks,
+        str(out_dir / "inference_result.png")
     )
+    
     return {
         "output_dir": out_dir,
         "mask": mask,
         "frame_times": frame_times,
         "primary_energy": primary_energy,
-        "centroid": centroid,
-        "dp_path": dp_path,
-        "kalman_path": kalman_path,
-        "path": path,
-        "sigma": sigma,
+        "tracks": df_tracks
     }
