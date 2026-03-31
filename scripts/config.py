@@ -52,11 +52,11 @@ class DASBandConfig:
     clean_outlier_threshold_ch: float = 5.0
     clean_project_to_line: bool = False
 
-    patch_frames: int = 256
-    patch_stride: int = 128
+    patch_frames: int = 512
+    patch_stride: int = 256
 
-    model_channels: int = 32
-    model_dropout: float = 0.1
+    model_channels: int = 64
+    model_dropout: float = 0.15
 
     loss_mask_weight: float = 1.0
     loss_center_weight: float = 0.3

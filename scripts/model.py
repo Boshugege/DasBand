@@ -35,13 +35,30 @@ class MixedConvBlock(nn.Module):
         self.fuse = nn.Sequential(
             nn.Conv2d(branch * 3, out_ch, kernel_size=1),
             nn.BatchNorm2d(out_ch),
-            nn.ReLU(inplace=True),
-            nn.Dropout2d(dropout),
+            nn.ReLU(inplace=True)
         )
+        
+        # 添加通道注意力机制 (Squeeze-and-Excitation, SE Block)
+        # 允许网络在全局范围内"重新加权"不同通道的特征，对抗强烈的背景噪声
+        self.se = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(out_ch, max(1, out_ch // 4), kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(max(1, out_ch // 4), out_ch, kernel_size=1),
+            nn.Sigmoid()
+        )
+        
+        self.dropout = nn.Dropout2d(dropout)
 
     def forward(self, x):
         x = torch.cat([self.b1(x), self.b2(x), self.b3(x)], dim=1)
-        return self.fuse(x)
+        x = self.fuse(x)
+        
+        # 施加注意力权重
+        se_weight = self.se(x)
+        x = x * se_weight
+        
+        return self.dropout(x)
 
 
 class UpBlock(nn.Module):
@@ -62,13 +79,21 @@ class UpBlock(nn.Module):
 
 
 class DASBandUNet(nn.Module):
-    def __init__(self, in_ch: int, base_ch: int = 32, dropout: float = 0.1):
+    def __init__(self, in_ch: int, base_ch: int = 64, dropout: float = 0.15):
         super().__init__()
+        # 加深了一层网络，扩大感受野，消耗更多算力但能捕捉更长的时间依赖
         self.enc1 = MixedConvBlock(in_ch, base_ch, dropout=dropout)
         self.pool1 = nn.MaxPool2d(2)
+        
         self.enc2 = MixedConvBlock(base_ch, base_ch * 2, dropout=dropout)
         self.pool2 = nn.MaxPool2d(2)
-        self.bottleneck = MixedConvBlock(base_ch * 2, base_ch * 4, dropout=dropout)
+        
+        self.enc3 = MixedConvBlock(base_ch * 2, base_ch * 4, dropout=dropout)
+        self.pool3 = nn.MaxPool2d(2)
+        
+        self.bottleneck = MixedConvBlock(base_ch * 4, base_ch * 8, dropout=dropout)
+        
+        self.up3 = UpBlock(base_ch * 8, base_ch * 4, base_ch * 4, dropout=dropout)
         self.up2 = UpBlock(base_ch * 4, base_ch * 2, base_ch * 2, dropout=dropout)
         self.up1 = UpBlock(base_ch * 2, base_ch, base_ch, dropout=dropout)
         self.head = nn.Conv2d(base_ch, 1, kernel_size=1)
@@ -76,7 +101,11 @@ class DASBandUNet(nn.Module):
     def forward(self, x):
         x1 = self.enc1(x)
         x2 = self.enc2(self.pool1(x1))
-        xb = self.bottleneck(self.pool2(x2))
-        xu = self.up2(xb, x2)
+        x3 = self.enc3(self.pool2(x2))
+        
+        xb = self.bottleneck(self.pool3(x3))
+        
+        xu = self.up3(xb, x3)
+        xu = self.up2(xu, x2)
         xu = self.up1(xu, x1)
         return self.head(xu)
