@@ -5,6 +5,7 @@ import argparse
 from pathlib import Path
 from typing import Optional
 
+from scripts import paths
 from scripts.config import DASBandConfig
 from scripts.extract_tdms import extract_name_to_csv
 from scripts.io import ensure_dir, resolve_audio_path, save_json
@@ -17,7 +18,7 @@ def build_parser():
     )
     parser.add_argument("name", help="Sample name. Expected Airtag CSV: <data_root>/Airtag/<name>.csv")
 
-    parser.add_argument("--data_root", default="D:\\WeaklySupervisedFootstep\\Data", help="Data root directory.")
+    parser.add_argument("--data_root", default=str(paths.dataset(paths.B202)), help="Data root directory.")
     parser.add_argument("--audio_dir", default=None, help="Audio directory override. Default: <data_root>/Audio")
     parser.add_argument("--airtag_dir", default=None, help="Airtag directory override. Default: <data_root>/Airtag")
     parser.add_argument("--das_dir", default=None, help="TDMS directory override. Default: <data_root>/DAS")
