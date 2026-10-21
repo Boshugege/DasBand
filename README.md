@@ -1,5 +1,13 @@
 # DASBand
 
+> **状态（2026-10-21）：归档。** 2026-03 从 WeaklySupervisedFootstep 拆出的时空响应带方法，没有对真值评估，03-31 之后没有继续开发。
+
+> **环境**：`/opt/homebrew/bin/python3.11 -m venv .venv && .venv/bin/python -m pip install -r requirements-lock.txt`（`requirements.txt` 是直接依赖）。数据和其他仓库的位置从本机的 `~/.config/wyh-footstep/paths.json` 读取，见 wyh-footstep-notes 仓库的 `setup/paths.md`。
+
+> 下文的 `<B202>` 指 B202 数据集目录 `b202-2023-11-15`（默认在工作区 `data/` 下，由 paths 配置决定），原来仓库里的 `Data/` 目录已经移走。
+
+> 下文的命令原在 Windows 上写成；在 macOS 上用 `.venv/bin/python`，续行用 `\`。
+
 `dasband/` 是一套围绕“DAS 时空响应带”展开的弱监督建模实现。它不再把问题视为“先做脚步点二分类，再给每个时间点找一个峰值通道”，而是把问题改写为：
 
 1. 先构造一条连续的时空带伪标签。
@@ -75,9 +83,9 @@ python -m dasband.main wangdihai
 
 - 目标名字，例如 `wangdihai`
 - 默认数据目录：
-  - `Data/Airtag`
-  - `Data/Audio`
-  - `Data/DAS`
+  - `<B202>/Airtag`
+  - `<B202>/Audio`
+  - `<B202>/DAS`
 
 输出：
 
@@ -93,8 +101,8 @@ python -m dasband.main wangdihai
 
 输入：
 
-- `Data/Airtag/<name>.csv`
-- `Data/DAS/*.tdms`
+- `<B202>/Airtag/<name>.csv`
+- `<B202>/DAS/*.tdms`
 - 采样率 `--das_fs`
 - Airtag 时间时区偏移 `--csv_utc_offset_hours`
 - 跳过前若干通道 `--skip_channels`
@@ -302,8 +310,8 @@ python -m dasband.main wangdihai
 
 输入：
 
-- `Data/Airtag/<name>.csv`
-- `Data/DAS/*.tdms`
+- `<B202>/Airtag/<name>.csv`
+- `<B202>/DAS/*.tdms`
 
 输出：
 
